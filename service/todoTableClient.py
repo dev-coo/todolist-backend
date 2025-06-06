@@ -3,6 +3,10 @@ import json
 import logging
 from collections import defaultdict
 
+# 로깅 설정 추가
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # boto3를 사용하여 DynamoDB 클라이언트를 생성합니다. 
 # boto3 라이브러리는 자동으로 ECS 태스크 역할과 연결된 자격 증명을 사용하여 
 # DynamoDB와 통신하므로 코드에서 자격 증명을 저장/관리할 필요가 없습니다!
@@ -31,38 +35,51 @@ def getAllTodos():
     return json.dumps(todoList)
 
 def createTodo(text):
-    # 새 할일의 ID를 생성하기 위해 현재 모든 할일을 가져와서 최대 ID를 찾습니다.
-    response = client.scan(
-        TableName='TodoTable',
-        ProjectionExpression='id'
-    )
-    
-    max_id = 0
-    for item in response["Items"]:
-        current_id = int(item["id"]["N"])
-        if current_id > max_id:
-            max_id = current_id
-    
-    new_id = max_id + 1
-    
-    # DynamoDB API PutItem을 사용하여 새 할일을 추가합니다.
-    response = client.put_item(
-        TableName='TodoTable',
-        Item={
-            'id': {'N': str(new_id)},
-            'text': {'S': text},
-            'completed': {'BOOL': False}
+    try:
+        logger.info(f"새 할일 생성 시도: {text}")
+        
+        # 새 할일의 ID를 생성하기 위해 현재 모든 할일을 가져와서 최대 ID를 찾습니다.
+        response = client.scan(
+            TableName='TodoTable',
+            ProjectionExpression='id'
+        )
+        
+        logger.info(f"ID 스캔 응답: {response}")
+        
+        max_id = 0
+        for item in response["Items"]:
+            current_id = int(item["id"]["N"])
+            if current_id > max_id:
+                max_id = current_id
+        
+        new_id = max_id + 1
+        logger.info(f"새 ID: {new_id}")
+        
+        # DynamoDB API PutItem을 사용하여 새 할일을 추가합니다.
+        put_response = client.put_item(
+            TableName='TodoTable',
+            Item={
+                'id': {'N': str(new_id)},
+                'text': {'S': text},
+                'completed': {'BOOL': False}
+            }
+        )
+        
+        logger.info(f"PutItem 응답: {put_response}")
+        
+        # 새로 생성된 할일을 반환합니다.
+        new_todo = {
+            "id": new_id,
+            "text": text,
+            "completed": False
         }
-    )
-    
-    # 새로 생성된 할일을 반환합니다.
-    new_todo = {
-        "id": new_id,
-        "text": text,
-        "completed": False
-    }
-    
-    return json.dumps(new_todo)
+        
+        return json.dumps(new_todo)
+        
+    except Exception as e:
+        logger.error(f"할일 생성 오류: {str(e)}")
+        error_response = {"error": f"할일 생성 실패: {str(e)}"}
+        return json.dumps(error_response)
 
 def toggleTodo(todo_id):
     # 먼저 현재 할일의 완료 상태를 가져옵니다.
@@ -94,13 +111,23 @@ def toggleTodo(todo_id):
     return json.dumps(success_response)
 
 def deleteTodo(todo_id):
-    # DynamoDB API DeleteItem을 사용하여 할일을 삭제합니다.
-    response = client.delete_item(
-        TableName='TodoTable',
-        Key={
-            'id': {'N': str(todo_id)}
-        }
-    )
-    
-    success_response = {"message": "할일이 삭제되었습니다."}
-    return json.dumps(success_response) 
+    try:
+        logger.info(f"할일 삭제 시도: {todo_id}")
+        
+        # DynamoDB API DeleteItem을 사용하여 할일을 삭제합니다.
+        response = client.delete_item(
+            TableName='TodoTable',
+            Key={
+                'id': {'N': str(todo_id)}
+            }
+        )
+        
+        logger.info(f"DeleteItem 응답: {response}")
+        
+        success_response = {"message": "할일이 삭제되었습니다."}
+        return json.dumps(success_response)
+        
+    except Exception as e:
+        logger.error(f"할일 삭제 오류: {str(e)}")
+        error_response = {"error": f"할일 삭제 실패: {str(e)}"}
+        return json.dumps(error_response) 

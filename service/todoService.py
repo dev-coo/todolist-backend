@@ -1,6 +1,11 @@
 from flask import Flask, jsonify, json, Response, request
 from flask_cors import CORS
 import todoTableClient
+import logging
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
@@ -24,17 +29,26 @@ def getTodos():
 # 새로운 할일을 생성합니다.
 @app.route("/todos", methods=['POST'])
 def createTodo():
-    requestBody = request.get_json()
-    
-    if not requestBody or 'text' not in requestBody:
-        return jsonify({"error": "할일 텍스트가 필요합니다."}), 400
-    
-    serviceResponse = todoTableClient.createTodo(requestBody['text'])
-    
-    flaskResponse = Response(serviceResponse)
-    flaskResponse.headers["Content-Type"] = "application/json"
-    
-    return flaskResponse
+    try:
+        logger.info("POST /todos 요청 받음")
+        requestBody = request.get_json()
+        logger.info(f"요청 본문: {requestBody}")
+        
+        if not requestBody or 'text' not in requestBody:
+            logger.warning("잘못된 요청: text 필드 누락")
+            return jsonify({"error": "할일 텍스트가 필요합니다."}), 400
+        
+        serviceResponse = todoTableClient.createTodo(requestBody['text'])
+        logger.info(f"서비스 응답: {serviceResponse}")
+        
+        flaskResponse = Response(serviceResponse)
+        flaskResponse.headers["Content-Type"] = "application/json"
+        
+        return flaskResponse
+        
+    except Exception as e:
+        logger.error(f"createTodo 오류: {str(e)}")
+        return jsonify({"error": f"서버 오류: {str(e)}"}), 500
 
 # 할일의 완료 상태를 토글합니다. (인증 필요)
 @app.route("/todos/<todoId>/toggle", methods=['POST'])
@@ -50,13 +64,20 @@ def toggleTodo(todoId):
 # 할일을 삭제합니다. (인증 필요)
 @app.route("/todos/<todoId>", methods=['DELETE'])
 def deleteTodo(todoId):
-    # TODO: 인증 검증 로직 추가 예정
-    serviceResponse = todoTableClient.deleteTodo(todoId)
-    
-    flaskResponse = Response(serviceResponse)
-    flaskResponse.headers["Content-Type"] = "application/json"
-    
-    return flaskResponse
+    try:
+        logger.info(f"DELETE /todos/{todoId} 요청 받음")
+        # TODO: 인증 검증 로직 추가 예정
+        serviceResponse = todoTableClient.deleteTodo(todoId)
+        logger.info(f"서비스 응답: {serviceResponse}")
+        
+        flaskResponse = Response(serviceResponse)
+        flaskResponse.headers["Content-Type"] = "application/json"
+        
+        return flaskResponse
+        
+    except Exception as e:
+        logger.error(f"deleteTodo 오류: {str(e)}")
+        return jsonify({"error": f"서버 오류: {str(e)}"}), 500
 
 # 로컬 서버에서 서비스를 실행합니다. 포트 8080에서 수신 대기합니다.
 if __name__ == "__main__":
