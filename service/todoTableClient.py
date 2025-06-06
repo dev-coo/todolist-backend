@@ -2,58 +2,105 @@ import boto3
 import json
 import logging
 from collections import defaultdict
-import argparse
 
 # boto3를 사용하여 DynamoDB 클라이언트를 생성합니다. 
 # boto3 라이브러리는 자동으로 ECS 태스크 역할과 연결된 자격 증명을 사용하여 
-# DynamoDB와 통신하므로 코드에서 자격 증명을 저장/관리할 필요가 전혀 없습니다!
+# DynamoDB와 통신하므로 코드에서 자격 증명을 저장/관리할 필요가 없습니다!
 region = 'ap-northeast-2'
 client = boto3.client('dynamodb', region_name=region)
 
-def getTodosJson(items):
-    # 반환된 투두들을 순회하고 프론트엔드에서 예상하는 
-    # JSON 응답 구조와 일치하는 새 딕셔너리에 속성을 추가합니다.
-    todoList = []
-
-    for item in items:
-        todo = {}
-
-        todo["id"] = int(item["id"]["N"])
-        todo["text"] = item["text"]["S"]
-        todo["completed"] = item["completed"]["BOOL"]
-
-        todoList.append(todo)
-
-    return todoList
-
 def getAllTodos():
-    # DynamoDB 스캔 작업을 사용하여 DynamoDB에서 모든 투두를 검색합니다.
-    # 참고: 스캔 API는 DynamoDB 테이블에 많은 수의 레코드가 포함되어 있고 
-    # DynamoDB에서 응답이 반환되기 전에 테이블에서 많은 양의 데이터를 스캔해야 하는 
-    # 필터가 작업에 적용될 때 지연 시간 측면에서 비용이 많이 들 수 있습니다.
-    # 많은 요청을 받는 대용량 테이블의 경우 자주/공통 스캔 작업의 결과를 
-    # 인메모리 캐시에 저장하는 것이 일반적입니다. DynamoDB Accelerator(DAX) 또는 
-    # ElastiCache 사용으로 이러한 이점을 제공할 수 있습니다.
-    # 하지만 투두리스트 API는 트래픽이 적고 테이블이 매우 작기 때문에 
-    # 스캔 작업이 워크샵의 요구 사항에 적합합니다.
+    # DynamoDB 스캔 작업을 사용하여 DynamoDB에서 모든 할일을 검색합니다.
     response = client.scan(
         TableName='TodoTable'
     )
 
     logging.info(response["Items"])
 
-    # 반환된 투두들을 순회하고 프론트엔드에서 예상하는 
-    # JSON 응답 구조와 일치하는 새 딕셔너리에 속성을 추가합니다.
-    todoList = getTodosJson(response["Items"])
+    # 반환된 할일들을 반복하고 프론트엔드에서 예상하는 JSON 응답 구조와 
+    # 일치하는 새 딕셔너리에 속성을 추가합니다.
+    todoList = defaultdict(list)
+    for item in response["Items"]:
+        todo = {}
+        todo["id"] = int(item["id"]["N"])
+        todo["text"] = item["text"]["S"]
+        todo["completed"] = item["completed"]["BOOL"]
+        todoList["todos"].append(todo)
 
+    # 생성된 딕셔너리 목록을 JSON으로 변환합니다.
     return json.dumps(todoList)
 
-# 커맨드 라인에서 테스트할 수 있도록
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    args = parser.parse_args()
+def createTodo(text):
+    # 새 할일의 ID를 생성하기 위해 현재 모든 할일을 가져와서 최대 ID를 찾습니다.
+    response = client.scan(
+        TableName='TodoTable',
+        ProjectionExpression='id'
+    )
+    
+    max_id = 0
+    for item in response["Items"]:
+        current_id = int(item["id"]["N"])
+        if current_id > max_id:
+            max_id = current_id
+    
+    new_id = max_id + 1
+    
+    # DynamoDB API PutItem을 사용하여 새 할일을 추가합니다.
+    response = client.put_item(
+        TableName='TodoTable',
+        Item={
+            'id': {'N': str(new_id)},
+            'text': {'S': text},
+            'completed': {'BOOL': False}
+        }
+    )
+    
+    # 새로 생성된 할일을 반환합니다.
+    new_todo = {
+        "id": new_id,
+        "text": text,
+        "completed": False
+    }
+    
+    return json.dumps(new_todo)
 
-    print("모든 투두 가져오기")
-    items = getAllTodos()
+def toggleTodo(todo_id):
+    # 먼저 현재 할일의 완료 상태를 가져옵니다.
+    response = client.get_item(
+        TableName='TodoTable',
+        Key={
+            'id': {'N': str(todo_id)}
+        }
+    )
+    
+    if 'Item' not in response:
+        error_response = {"error": "할일을 찾을 수 없습니다."}
+        return json.dumps(error_response)
+    
+    current_completed = response['Item']['completed']['BOOL']
+    new_completed = not current_completed
+    
+    # DynamoDB API UpdateItem을 사용하여 완료 상태를 토글합니다.
+    response = client.update_item(
+        TableName='TodoTable',
+        Key={
+            'id': {'N': str(todo_id)}
+        },
+        UpdateExpression="SET completed = :c",
+        ExpressionAttributeValues={':c': {'BOOL': new_completed}}
+    )
+    
+    success_response = {"message": "할일 상태가 업데이트되었습니다.", "completed": new_completed}
+    return json.dumps(success_response)
 
-    print(items) 
+def deleteTodo(todo_id):
+    # DynamoDB API DeleteItem을 사용하여 할일을 삭제합니다.
+    response = client.delete_item(
+        TableName='TodoTable',
+        Key={
+            'id': {'N': str(todo_id)}
+        }
+    )
+    
+    success_response = {"message": "할일이 삭제되었습니다."}
+    return json.dumps(success_response) 
